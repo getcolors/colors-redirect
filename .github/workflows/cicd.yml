@@ -117,12 +117,12 @@ jobs:
     # Without this the job cannot see the environment-scoped secret or
     # variables at all, and every value below resolves to empty.
     environment:
-      name: colors-website
+      name: once-colors
       url: https://getcolors.ai
     # Serialize rather than cancel: interrupting a deploy midway is worse than
     # making the next one wait.
     concurrency:
-      group: deploy-colors-website
+      group: deploy-once-colors
       cancel-in-progress: false
     steps:
       - name: Deploy via SSH
