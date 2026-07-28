@@ -35,10 +35,36 @@ There are no tests, linters, or package manifests.
 
 `.github/workflows/cicd.yml` runs on push to `main`:
 
-1. `build-arm` and `build-amd` build natively on `ubuntu-24.04-arm` / `ubuntu-24.04` in parallel — no QEMU emulation — pushing per-arch tags (`:arm`, `:amd`, `:sha-<short>-<arch>`) to `ghcr.io/<repo>`. Each uses a separate GHA cache scope.
-2. `manifest` stitches the per-arch tags into multi-arch `:latest` and `:sha-<short>` with `docker manifest create/annotate/push`. `provenance: false` in the build steps is required for this manual manifest approach to work.
-3. `deploy` SSHes to the server and runs `sudo once update getcolors.ai`.
+1. `build` is a two-entry matrix building natively on `ubuntu-24.04-arm` and `ubuntu-24.04` in parallel — no QEMU emulation. Each leg pushes **by digest, under no tag at all**, and uploads its digest as an artifact; each has its own GHA cache scope. `provenance: false` is required for the manifest step to work.
+2. `manifest` downloads both digests and creates multi-arch `:latest` and `:sha-<short>` in a single `docker buildx imagetools create`. Both halves therefore always come from the same run — the mutable `:arm` / `:amd` tags this replaced were shared across runs, so two pushes landing close together could leave `:latest` with its arm64 half from one commit and its amd64 half from another, undetected.
+3. `deploy` opens one SSH connection and closes it.
 
-Because the arch-specific tags are the build inputs to the manifest step, changing a tag name in one build job requires updating the manifest job to match.
+### The deploy is a ping
 
-Deployment secrets: `SSH_PRIVATE_KEY`, `SERVER_IP`, `SERVER_USER`.
+The deploy job does not say what to deploy. Its whole payload is:
+
+```sh
+ssh -T -n <user>@<server> deploy-ping
+```
+
+and `deploy-ping` is ignored. The deploy key is pinned to a ForceCommand in the
+server's `authorized_keys`, so the server runs its own script, which reconciles
+**every** application in the profile — this redirect and `www.getcolors.ai`
+both.
+
+- **No host, image or application name appears in this repo's CI.** Adding an
+  application to the deployment does not touch this file.
+- **A push here also reconciles the website**, and a failure there turns this
+  repo's build red. That is the accepted cost of keeping host names out of CI.
+- **The key is no longer an arbitrary-command credential.** With
+  `restrict,command="..."`, a leaked `SSH_PRIVATE_KEY` can trigger a deploy of
+  already-published images and nothing else.
+
+The script, the `authorized_keys` line and the sudoers entry live in
+**`getcolors/colors-website` under `deploy/`** — one copy, because one server
+runs both applications. Don't add a second copy here.
+
+Deployment credentials: secret `SSH_PRIVATE_KEY`; variables `SERVER_IP`,
+`SERVER_USER`, `SSH_KNOWN_HOSTS`. All are scoped to the **`colors-website`**
+GitHub Environment — named after the `colors.yml` profile, not after this repo.
+Get that name wrong and every one of them silently resolves to empty.

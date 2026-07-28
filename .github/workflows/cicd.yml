@@ -119,13 +119,16 @@ jobs:
     environment:
       name: colors-website
       url: https://getcolors.ai
-    # Serialize rather than cancel: interrupting a deploy midway is worse than
-    # making the next one wait.
+    # Serialize this repository's own pings rather than cancelling: interrupting
+    # a deploy midway is worse than making the next one wait. Pings from *other*
+    # repositories are serialized server-side by a flock in the forced command —
+    # concurrency groups do not span repositories, and every ping now reconciles
+    # every application, so cross-repository overlap is routine.
     concurrency:
-      group: deploy-colors-website-getcolors.ai
+      group: deploy-ping-colors-redirect
       cancel-in-progress: false
     steps:
-      - name: Deploy via SSH
+      - name: Ping the deploy host
         env:
           # Only the key is a secret. The address and user are variables, so CI
           # logs stay readable — DNS reveals the address anyway.
@@ -133,7 +136,6 @@ jobs:
           SERVER_IP: ${{ vars.SERVER_IP }}
           SERVER_USER: ${{ vars.SERVER_USER }}
           SSH_KNOWN_HOSTS: ${{ vars.SSH_KNOWN_HOSTS }}
-          HOST: getcolors.ai
         run: |
           # Create the .ssh directory and start the agent
           mkdir -p ~/.ssh
@@ -151,5 +153,12 @@ jobs:
           fi
           printf '%s\n' "$SSH_KNOWN_HOSTS" >> ~/.ssh/known_hosts
 
-          # Execute the commands on the remote server
-          ssh -o StrictHostKeyChecking=yes "$SERVER_USER@$SERVER_IP" "sudo once update $HOST"
+          # Ping. The word below is not what runs: the deploy key is pinned to a
+          # ForceCommand in authorized_keys, so the server runs its own script
+          # and reconciles every application in the profile — including this
+          # one. Nothing here names a host or an image; the script and its
+          # install notes live in getcolors/colors-website under deploy/.
+          #
+          # Synchronous on purpose: this ssh exits with the deploy's status, so
+          # a failed reconcile still fails the workflow.
+          ssh -T -n -o StrictHostKeyChecking=yes "$SERVER_USER@$SERVER_IP" deploy-ping
