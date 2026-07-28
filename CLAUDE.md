@@ -48,11 +48,12 @@ ssh -T -n <user>@<server> deploy-ping
 ```
 
 and `deploy-ping` is ignored. The deploy key is pinned to a ForceCommand in the
-server's `authorized_keys`, so the server runs its own script, which reconciles
-**every** application in the profile — this redirect and `www.getcolors.ai`
-both.
+server's `authorized_keys`, so the server runs its own script — babashka, which
+reads the host list out of `colors.yml` — and it reconciles **every**
+application in the profile: this redirect and `www.getcolors.ai` both.
 
-- **No host, image or application name appears in this repo's CI.** Adding an
+- **No host, image or application name appears in this repo's CI**, nor in the
+  deploy script. `colors.yml` is the single source of truth, so adding an
   application to the deployment does not touch this file.
 - **A push here also reconciles the website**, and a failure there turns this
   repo's build red. That is the accepted cost of keeping host names out of CI.
