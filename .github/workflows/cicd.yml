@@ -1,0 +1,140 @@
+name: Build and Publish Docker Image
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  build-arm:
+    runs-on: ubuntu-24.04-arm
+    outputs:
+      short_sha: ${{ steps.sha.outputs.short }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Compute short sha
+        id: sha
+        run: echo "short=${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository }}:arm
+            ghcr.io/${{ github.repository }}:sha-${{ steps.sha.outputs.short }}-arm
+          provenance: false
+          cache-from: type=gha,scope=arm
+          cache-to: type=gha,mode=max,scope=arm
+
+  build-amd:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Compute short sha
+        id: sha
+        run: echo "short=${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository }}:amd
+            ghcr.io/${{ github.repository }}:sha-${{ steps.sha.outputs.short }}-amd
+          provenance: false
+          cache-from: type=gha,scope=amd
+          cache-to: type=gha,mode=max,scope=amd
+
+  manifest:
+    runs-on: ubuntu-24.04-arm
+    needs:
+      - build-arm
+      - build-amd
+    env:
+      SHORT_SHA: ${{ needs.build-arm.outputs.short_sha }}
+    steps:
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Publish the latest manifest
+        run: >-
+          docker manifest create ghcr.io/${{ github.repository }}:latest
+          ghcr.io/${{ github.repository }}:arm
+          ghcr.io/${{ github.repository }}:amd
+          && docker manifest annotate ghcr.io/${{ github.repository }}:latest
+          ghcr.io/${{ github.repository }}:arm --os linux --arch arm64
+          && docker manifest annotate ghcr.io/${{ github.repository }}:latest
+          ghcr.io/${{ github.repository }}:amd --os linux --arch amd64
+          && docker manifest push ghcr.io/${{ github.repository }}:latest
+
+      - name: Publish the sha manifest
+        run: >-
+          docker manifest create ghcr.io/${{ github.repository }}:sha-${SHORT_SHA}
+          ghcr.io/${{ github.repository }}:sha-${SHORT_SHA}-arm
+          ghcr.io/${{ github.repository }}:sha-${SHORT_SHA}-amd
+          && docker manifest annotate ghcr.io/${{ github.repository }}:sha-${SHORT_SHA}
+          ghcr.io/${{ github.repository }}:sha-${SHORT_SHA}-arm --os linux --arch arm64
+          && docker manifest annotate ghcr.io/${{ github.repository }}:sha-${SHORT_SHA}
+          ghcr.io/${{ github.repository }}:sha-${SHORT_SHA}-amd --os linux --arch amd64
+          && docker manifest push ghcr.io/${{ github.repository }}:sha-${SHORT_SHA}
+
+  deploy:
+    runs-on: ubuntu-24.04-arm
+    needs:
+      - manifest
+    steps:
+      - name: Deploy via SSH
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+          SERVER_IP: ${{ secrets.SERVER_IP }}
+          SERVER_USER: ${{ secrets.SERVER_USER }}
+          HOST: getcolors.ai
+        run: |
+          # Create the .ssh directory and start the agent
+          mkdir -p ~/.ssh
+          eval $(ssh-agent -s)
+
+          # Add the private key to the agent
+          echo "$SSH_PRIVATE_KEY" | tr -d '\r' | ssh-add -
+
+          # Add the server to known_hosts to avoid manual confirmation
+          ssh-keyscan -H "$SERVER_IP" >> ~/.ssh/known_hosts
+
+          # Execute the commands on the remote server
+          ssh $SERVER_USER@$SERVER_IP "sudo once update $HOST"
