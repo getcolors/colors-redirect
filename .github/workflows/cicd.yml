@@ -122,7 +122,7 @@ jobs:
     # Serialize rather than cancel: interrupting a deploy midway is worse than
     # making the next one wait.
     concurrency:
-      group: deploy-colors-website-getcolors.ai
+      group: deploy-colors-website
       cancel-in-progress: false
     steps:
       - name: Deploy via SSH
@@ -133,7 +133,6 @@ jobs:
           SERVER_IP: ${{ vars.SERVER_IP }}
           SERVER_USER: ${{ vars.SERVER_USER }}
           SSH_KNOWN_HOSTS: ${{ vars.SSH_KNOWN_HOSTS }}
-          HOST: getcolors.ai
         run: |
           # Create the .ssh directory and start the agent
           mkdir -p ~/.ssh
@@ -151,5 +150,14 @@ jobs:
           fi
           printf '%s\n' "$SSH_KNOWN_HOSTS" >> ~/.ssh/known_hosts
 
-          # Execute the commands on the remote server
-          ssh -o StrictHostKeyChecking=yes "$SERVER_USER@$SERVER_IP" "sudo once update $HOST"
+          # A ping, not a command. This key's authorized_keys entry already
+          # names every host this repository serves, and its forced command
+          # updates all of them — so there is no hostname to duplicate here,
+          # and adding a host to colors.yml needs no change to this file.
+          #
+          # Connect to SERVER_IP: ONCE keys the pinned SSH_KNOWN_HOSTS entry on
+          # the address, so a hostname here would find no match under
+          # StrictHostKeyChecking=yes.
+          #
+          # The exit status is the deploy result for every host this key owns.
+          ssh -T -o StrictHostKeyChecking=yes "$SERVER_USER@$SERVER_IP" < /dev/null
