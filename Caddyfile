@@ -7,10 +7,10 @@
 
 :80 {
 	handle /up {
-		header Content-Type text/plain; charset=utf-8
+		header Content-Type "text/plain; charset=utf-8"
 		respond `OK` 200
 	}
 	handle {
-		redir https://www.getcolors.ai{uri} permanent
+		redir https://{$REDIRECT_HOST:www.getcolors.ai}{uri} permanent
 	}
 }

@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-A single-purpose container that 301-redirects all traffic to `https://www.getcolors.ai`, preserving the request URI. There is no application code — the entire repo is four config files (`Caddyfile`, `Procfile`, `Dockerfile`, `.github/workflows/cicd.yml`). It fronts the apex/legacy hostnames for the `getcolors.ai` deployment.
+A single-purpose container that 301-redirects all traffic to `https://www.getcolors.ai` by default, preserving the request URI. `REDIRECT_HOST` overrides the hostname at startup; its default is `www.getcolors.ai`. The value must be a hostname without a scheme, path, or trailing slash; HTTPS remains fixed. There is no application code — the entire repo is four config files (`Caddyfile`, `Procfile`, `Dockerfile`, `.github/workflows/cicd.yml`). It fronts the apex/legacy hostnames for the `getcolors.ai` deployment.
 
 ## Commands
 
@@ -33,15 +33,17 @@ There are no tests, linters, or package manifests.
 
 ## CI/CD
 
-`.github/workflows/cicd.yml` runs on push to `main`:
+`.github/workflows/cicd.yml` runs on pushes to `main` and manual dispatch:
 
-1. `build-arm` and `build-amd` build natively on `ubuntu-24.04-arm` / `ubuntu-24.04` in parallel — no QEMU emulation — pushing per-arch tags (`:arm`, `:amd`, `:sha-<short>-<arch>`) to `ghcr.io/<repo>`. Each uses a separate GHA cache scope.
-2. `manifest` stitches the per-arch tags into multi-arch `:latest` and `:sha-<short>` with `docker manifest create/annotate/push`. `provenance: false` in the build steps is required for this manual manifest approach to work.
-3. `deploy` SSHes to the server and runs `sudo once update getcolors.ai`.
+1. The `build` matrix builds natively on `ubuntu-24.04-arm` / `ubuntu-24.04` in parallel, pushes images by digest, and uploads per-architecture digest artifacts. Each architecture has its own GHA cache scope; `provenance: false` keeps the digest inputs as single-platform images.
+2. `publish-deploy` holds the `deploy-once-colors` concurrency lock across publication and deployment, without cancelling an active deployment. Immediately before publishing, it checks the current `main` SHA through the GitHub API. Stale commits and runs on other branches skip publication and deployment.
+3. `docker buildx imagetools create` combines this run's digests into multi-architecture `:latest` and `:sha-<short>` tags.
+4. SSH connects without a remote command. The deployment key's forced command updates every hostname ONCE assigned to this repository. Strict host-key checking uses the pinned `SSH_KNOWN_HOSTS` entry.
 
-Because the arch-specific tags are the build inputs to the manifest step, changing a tag name in one build job requires updating the manifest job to match.
-
-Deployment secrets: `SSH_PRIVATE_KEY`, `SERVER_IP`, `SERVER_USER`.
+The `once-colors` GitHub environment supplies the `SSH_PRIVATE_KEY` secret and
+`SERVER_IP`, `SERVER_USER`, and `SSH_KNOWN_HOSTS` variables. ONCE publishes these
+settings during provisioning. Keep manifest publication and SSH deployment in
+the same concurrency-protected job so `latest` cannot change between them.
 
 ## Documentation
 

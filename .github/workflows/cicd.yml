@@ -68,14 +68,19 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
-  # One imagetools call builds both tags from the digests just pushed, so the
-  # two halves of a manifest always come from the same run. It also reads each
-  # child's platform itself, which is why the manual `docker manifest annotate
-  # --os/--arch` pairs this replaced are gone.
-  manifest:
+  # Hold the same lock from publication through deployment so another run
+  # cannot replace :latest while this run is deploying. Check main after
+  # acquiring the lock to prevent a slower, older build rolling production back.
+  publish-deploy:
     runs-on: ubuntu-24.04-arm
     needs:
       - build
+    environment:
+      name: once-colors
+      url: https://getcolors.ai
+    concurrency:
+      group: deploy-once-colors
+      cancel-in-progress: false
     steps:
       - name: Download digests
         uses: actions/download-artifact@v4
@@ -98,34 +103,37 @@ jobs:
         id: sha
         run: echo "short=${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
 
+      - name: Check that this is the current main commit
+        id: current
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          main_sha=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" --jq '.object.sha')
+          if [ "$GITHUB_REF" = refs/heads/main ] && [ "$GITHUB_SHA" = "$main_sha" ]; then
+            echo "publish=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "Skipping publication and deployment: this run is not the current main commit."
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Create and push the manifest list
+        if: steps.current.outputs.publish == 'true'
         working-directory: /tmp/digests
         run: |
+          sources=()
+          for digest in *; do
+            sources+=("ghcr.io/$GITHUB_REPOSITORY@sha256:$digest")
+          done
           docker buildx imagetools create \
             --tag ghcr.io/${{ github.repository }}:latest \
             --tag ghcr.io/${{ github.repository }}:sha-${{ steps.sha.outputs.short }} \
-            $(printf 'ghcr.io/${{ github.repository }}@sha256:%s ' *)
+            "${sources[@]}"
 
       - name: Show what was published
+        if: steps.current.outputs.publish == 'true'
         run: docker buildx imagetools inspect ghcr.io/${{ github.repository }}:latest
-
-  deploy:
-    runs-on: ubuntu-24.04-arm
-    needs:
-      - manifest
-    # The environment ONCE publishes into, named after the colors.yml profile.
-    # Without this the job cannot see the environment-scoped secret or
-    # variables at all, and every value below resolves to empty.
-    environment:
-      name: once-colors
-      url: https://getcolors.ai
-    # Serialize rather than cancel: interrupting a deploy midway is worse than
-    # making the next one wait.
-    concurrency:
-      group: deploy-once-colors
-      cancel-in-progress: false
-    steps:
       - name: Deploy via SSH
+        if: steps.current.outputs.publish == 'true'
         env:
           # Only the key is a secret. The address and user are variables, so CI
           # logs stay readable — DNS reveals the address anyway.
@@ -136,7 +144,7 @@ jobs:
         run: |
           # Create the .ssh directory and start the agent
           mkdir -p ~/.ssh
-          eval $(ssh-agent -s)
+          eval "$(ssh-agent -s)"
 
           # Add the private key to the agent
           echo "$SSH_PRIVATE_KEY" | tr -d '\r' | ssh-add -
