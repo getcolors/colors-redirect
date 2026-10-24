@@ -2,7 +2,7 @@
 
 A tiny Caddy container that permanently redirects all traffic to `https://www.getcolors.ai` by default, preserving the request path and query string.
 
-It fronts the apex and legacy hostnames for the `getcolors.ai` deployment, so there is no application code here — just the redirect config and its build/deploy pipeline.
+It fronts the apex and legacy hostnames for the `getcolors.ai` deployment, so there is no application code here — just the redirect config and its build/publish pipeline.
 
 ## Behavior
 
@@ -29,7 +29,7 @@ docker run --rm -p 8080:80 -e REDIRECT_HOST=www.example.com colors-redirect
 | `Caddyfile` | The redirect and health-check rules |
 | `Procfile` | Process list, run by [Hivemind](https://github.com/DarthSim/hivemind) |
 | `Dockerfile` | Fetches Hivemind, layers it onto `caddy:2-alpine` |
-| `.github/workflows/cicd.yml` | Build, publish to GHCR, deploy |
+| `.github/workflows/cicd.yml` | Build and publish to GHCR |
 
 ## Local development
 
@@ -58,17 +58,10 @@ curl -i http://localhost:8080/foo?bar=1
 Pushing to `main` (or running the workflow manually) triggers `.github/workflows/cicd.yml`:
 
 1. `arm64` and `amd64` images build natively in parallel and push by digest to `ghcr.io/getcolors/colors-redirect`. Each build uploads its digest as a workflow artifact.
-2. A combined `publish-deploy` job acquires a concurrency lock and checks that the run is for the current `main` commit. Older commits and manual runs on other branches skip publication and deployment.
-3. The job combines the digests into multi-architecture `:latest` and `:sha-<short-sha>` tags, then connects over SSH while still holding the lock. The key's server-side forced command updates every hostname assigned to this repository by ONCE.
+2. A `publish` job acquires a concurrency lock and checks that the run is for the current `main` commit. Older commits and manual runs on other branches skip publication.
+3. The job combines the digests into multi-architecture `:latest` and `:sha-<short-sha>` tags.
 
-Configure the GitHub environment `once-colors` with:
-
-| Type | Name | Purpose |
-| --- | --- | --- |
-| Secret | `SSH_PRIVATE_KEY` | ONCE deployment key |
-| Variable | `SERVER_IP` | Server address |
-| Variable | `SERVER_USER` | SSH user |
-| Variable | `SSH_KNOWN_HOSTS` | Host key entry pinned by ONCE for that address |
-
-ONCE publishes these deployment settings during provisioning. The workflow refuses
-to connect without `SSH_KNOWN_HOSTS` and enforces strict host-key checking.
+Publishing does not deploy. The `pocketdeploy-v2` deployment
+(`pocketcontext/pocketdeploy-v2`) runs `getcolors.ai`, `bigconfig.ai`,
+`www.bigconfig.ai` and `marketplace.bigconfig.ai` with this image pinned by digest;
+roll out a new image by updating that digest and running `pocketdeploy converge`.

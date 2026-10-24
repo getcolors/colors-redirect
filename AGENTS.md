@@ -25,7 +25,7 @@ There are no tests, linters, or package manifests.
 
 ## Architecture notes
 
-**TLS is terminated upstream.** The Caddyfile sets `auto_https off` and restricts `protocols h1`, and the server listens on plain `:80`. The host-level proxy (managed by `once`) handles certificates and HTTP/2+. Do not enable automatic HTTPS or bind :443 inside this container.
+**TLS is terminated upstream.** The Caddyfile sets `auto_https off` and restricts `protocols h1`, and the server listens on plain `:80`. The host-level ONCE proxy handles certificates and HTTP/2+. Do not enable automatic HTTPS or bind :443 inside this container.
 
 **`/up` must stay ahead of the catch-all.** Caddy's `handle` blocks are mutually exclusive and matched most-specific-first, so the health endpoint returns 200 while every other path falls through to `redir ... permanent`. Deployment health checks depend on `/up` never being redirected.
 
@@ -36,14 +36,14 @@ There are no tests, linters, or package manifests.
 `.github/workflows/cicd.yml` runs on pushes to `main` and manual dispatch:
 
 1. The `build` matrix builds natively on `ubuntu-24.04-arm` / `ubuntu-24.04` in parallel, pushes images by digest, and uploads per-architecture digest artifacts. Each architecture has its own GHA cache scope; `provenance: false` keeps the digest inputs as single-platform images.
-2. `publish-deploy` holds the `deploy-once-colors` concurrency lock across publication and deployment, without cancelling an active deployment. Immediately before publishing, it checks the current `main` SHA through the GitHub API. Stale commits and runs on other branches skip publication and deployment.
+2. `publish` holds the `publish-colors-redirect` concurrency lock without cancelling an active run. Immediately before publishing, it checks the current `main` SHA through the GitHub API. Stale commits and runs on other branches skip publication.
 3. `docker buildx imagetools create` combines this run's digests into multi-architecture `:latest` and `:sha-<short>` tags.
-4. SSH connects without a remote command. The deployment key's forced command updates every hostname ONCE assigned to this repository. Strict host-key checking uses the pinned `SSH_KNOWN_HOSTS` entry.
 
-The `once-colors` GitHub environment supplies the `SSH_PRIVATE_KEY` secret and
-`SERVER_IP`, `SERVER_USER`, and `SSH_KNOWN_HOSTS` variables. ONCE publishes these
-settings during provisioning. Keep manifest publication and SSH deployment in
-the same concurrency-protected job so `latest` cannot change between them.
+Publishing does not deploy. The `pocketdeploy-v2` deployment pins this image by
+digest for `getcolors.ai`, `bigconfig.ai`, `www.bigconfig.ai` and
+`marketplace.bigconfig.ai`; PocketDeploy supports GitHub delivery for one
+application per repository. Roll out a new image by updating the digest there and
+running `pocketdeploy converge`.
 
 ## Documentation
 
